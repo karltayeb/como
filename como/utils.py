@@ -1,4 +1,5 @@
 import jax.numpy as jnp
+import jax
 
 def sigmoid(x):
     return 0.5 * (jnp.tanh(x / 2) + 1)
@@ -16,7 +17,11 @@ def categorical_kl(alpha, pi):
 def normal_kl(mu, var, mu0=0, var0=1):
     return 0.5 * (jnp.log(var0) - jnp.log(var) + var/var0 + (mu - mu0)**2/var0 - 1)
 
-
+def bernoulli_entropy(p):
+    p = jnp.minimum(p, 1-p) 
+    p = jax.lax.clamp(1e-10, p, 0.5)
+    q = 1 - p
+    return - p * jnp.log(p) - q * jnp.log(q)
 
 def get_credible_set(alpha, target_coverage=0.95):
     u = alpha.argsort()[::-1]
