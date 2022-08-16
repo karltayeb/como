@@ -8,10 +8,16 @@ from jax import jit
 from .logistic_ser import expected_beta_ser, Xb_ser, iter_ser, ser_kl, lamb, _compute_tau
 from .utils import sigmoid
 
+# compute KL for each SER, vectorized
 v_ser_kl = jax.vmap(ser_kl, (
-    {'alpha': 0, 'delta': 0, 'mu': 0, 'var': 0, 'tau': None, 'xi': None}, {'pi': 0, 'sigma0': 0}))
+    {'alpha': 0, 'delta': 0, 'mu': 0, 'var': 0, 'tau': None, 'xi': None},
+    {'pi': 0, 'sigma0': 0}))
 
 def susie_kl(params, hypers):
+    """
+    KL divergence from the current variational approximation to the prior
+    Just the sum of KLs for each SER
+    """
     return jnp.sum(v_ser_kl(params, hypers))
 
 def Ew_susie(params):
@@ -63,7 +69,7 @@ def loglik_susie(data, params):
 
 @jit
 def elbo_susie(data, params, hypers):
-    return jnp.sum(loglik_susie(data, params)) + \
+    return jnp.sum(loglik_susie(data, params)) - \
             susie_kl(params, hypers)
 
 def update_xi_susie(data, params):
@@ -89,6 +95,11 @@ def init_susie(data, L=10):
     return params, hypers
 
 def susie_update_ser(carry, val):
+    """
+    Parameters
+        carry: (data, offset, xi, tau) tuple
+        val: (params, hypers) the set of 
+    """
     # unpack
     data, offset, xi, tau = carry
     params, hypers = val
@@ -114,11 +125,17 @@ def susie_update_ser(carry, val):
 @jit
 def susie_iter(data, params, hypers):
     # update SERs
+
+    # take xi and tau out of params while we update beta
     xi = params.pop('xi')
     tau = params.pop('tau')
     offset = Xb_susie(data, params)
+
+    # package data and parameters to be updated
     carry = (data, offset, xi, tau)
     val = (params, hypers)
+
+    # scan over parameters for each single effect
     carry, val = jax.lax.scan(susie_update_ser, carry, val)
 
     # update xi
