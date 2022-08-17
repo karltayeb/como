@@ -13,7 +13,7 @@ $$
 $$
 
 
-1. A logistic regression model $\log \frac{\pi_1({\bf x})}{\pi_0({\bf x})} = {\bf b}^T {\bf x}
+1. A logistic regression model $\log \frac{\pi_1({\bf x})}{\pi_0({\bf x})} = {\bf b}^T {\bf x}$
 1. A null component distribution $f_0$
 1. A alternative component distribution $f_1$
 
