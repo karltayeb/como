@@ -29,3 +29,9 @@ def get_credible_set(alpha, target_coverage=0.95):
     idx = sum(alpha_tot >= target_coverage) - 1
     cs = u[:-idx][::-1]
     return cs
+
+# check if array is monotone increasing
+is_monotone = lambda x: np.alltrue((np.roll(x, -1) - x)[:-1] >=0)
+
+# get smallest difference between two adjacent values in an array:w
+min_delta = lambda x: np.min((np.roll(x, -1) - x)[:-1])
