@@ -1,5 +1,6 @@
 from termios import FF0
 from tkinter import W
+from xmlrpc.client import Boolean
 from como.logistic_susie import loglik_susie
 from como.utils import bernoulli_entropy
 import jax.numpy as jnp
@@ -8,7 +9,7 @@ from functools import partial
 import jax
 import numpy as np
 
-from .component_distributions import ComponentDistribution, NormalFixedLocComponent, PointMassComponent
+from .component_distributions import ComponentDistribution, NormalFixedLocComponent, PointMassComponent, UnimodalNormalMixtureComponent
 from .logistic_regression import InterceptOnly, LogisticRegression, LogisticSusie
 
 class TwoComponentCoMo:
@@ -40,10 +41,13 @@ class TwoComponentCoMo:
             self.data, self.responsibilities, self.f0, self.f1 
         )
 
-    def elbo(self):
-        return twococomo_elbo(
+    def elbo(self, record: Boolean = False):
+        new_elbo = twococomo_elbo(
             self.data, self.responsibilities, self.f0, self.f1, self.logreg  
         )
+        if record:
+            self.elbo_history.append(new_elbo['total_elbo'])
+        return new_elbo
     
     def update_responsibilities(self):
         """
@@ -91,6 +95,28 @@ class PointNormalSuSiE(TwoComponentCoMo):
         data['y'] = np.random.uniform(data['beta'].size)
         logreg = LogisticSusie(data, L=10)
         super().__init__(data, f0, f1, logreg)
+
+class UnimodalNormalMixtureSuSiE(TwoComponentCoMo):
+    def __init__(self, data, f0_args: dict = {}, f1_args: dict = {}):
+        """
+        Initialize Point Normal SuSiE
+        (Covariatiate EBNM with "point-normal" effects,
+        and SuSiE prior on the mixture proportion)
+
+        Parameters:
+            data: dictionary with keys
+                'beta' and 'se' for observations and standard errors,
+                'X' and 'Z' for annotations and (fixed) covariates resp.
+            scale: (initial) scale parameter for the normal mixture component
+        """
+        f0 = PointMassComponent(**f0_args)
+        f1 = UnimodalNormalMixtureComponent(**f1_args)
+        
+        # TODO: make sure `y` is a key in data, otherwise make it
+        data['y'] = np.random.uniform(data['beta'].size)
+        logreg = LogisticSusie(data, L=10)
+        super().__init__(data, f0, f1, logreg)
+    
 
 class PointNormal(TwoComponentCoMo):
     def __init__(self, data, scale=1.0):
