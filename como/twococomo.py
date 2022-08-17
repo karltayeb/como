@@ -34,7 +34,34 @@ class TwoComponentCoMo:
 
     @property
     def responsibilities(self):
-        return self.data['y']
+        """
+        posterior assignment probability to the non-null component (f1)
+        """
+        return np.array(self.data['y'])
+
+    @property
+    def prior_log_odds(self):
+        """
+        return the (expected) prior log odds for each observation
+        this is the (expectation of) the prediction from the logistic regression model
+        """
+        return np.array(self.logreg.predict())
+
+    @property
+    def beta(self):
+        return self.data['beta']
+    
+    @property
+    def se(self):
+        return self.data['se']
+    
+    @property
+    def X(self):
+        return self.data['X']
+
+    @property
+    def Z(self):
+        return self.data['Z']
 
     def loglik(self):
         return twococomo_loglik(
