@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod
-from jax import jit, vmap
+from tkinter import W
+from jax import jit, vmap, grad, hessian
+import jax
 import jax.scipy as jsp
 import jax.numpy as jnp
 import numpy as np
@@ -30,7 +32,7 @@ class ComponentDistribution(ABC):
 
 
 class PointMassComponent(ComponentDistribution):
-    def __init__(self, loc):
+    def __init__(self, loc: float = 0.):
         super().__init__()
         self.loc = loc
 
@@ -68,18 +70,36 @@ class NormalFixedLocComponent(ComponentDistribution):
         
 
 class UnimodalNormalMixtureComponent(ComponentDistribution):
-    def __init__(self, mu, sigma0_grid, pi):
-        self.mu = mu
-        self.sigma0_grid = jnp.array(sigma0_grid)
-        self.pi = jnp.ones_like(sigma0_grid) / sigma0_grid.size
+    def __init__(self, loc: float = 0., scales: np.ndarray = None, pi: np.ndarray = None):
+        self.loc = loc
+
+        # TODO: pick sensible default for scale mixture-- what does ASH do?
+        if scales is None:
+            scales = np.power(2, np.arange(10)-5.)
+        self.scales = jnp.array(scales)
+
+        # record natural parameters for categorical
+        # log(pi_k/pi_K) k= 1,..., K-1
+        if pi is None:
+            pi = np.ones(scales.size) / scales.size
+        self.eta = pi2eta(pi)
+
 
     def convolved_logpdf(self, beta, se):
-        return _normal_convolved_logpdf(
-            self.mu, beta, se, sigma0)
+        return _normal_scale_mixture_convolved_pdf(
+            beta, se, self.loc, self.scales, self.pi
+        )
 
-    def update(self):
-        pass
+    def update(self, data: dict):
+        self.eta = newtonNSM(data['beta'], data['se'], self.loc, self.scales, self.eta, data['y'])
 
+    @property
+    def pi(self):
+        return eta2pi(self.eta) 
+
+"""
+Normal distribution helpers
+"""
 @jit
 def _normal_convolved_logpdf(beta, se, loc, scale):
     scale = jnp.sqrt(se**2 + scale**2)
@@ -94,10 +114,65 @@ def _normal_ebnm_objective(beta, se, loc, scale, responsibilities):
     loglik = _normal_convolved_logpdf(beta, se, loc, scale)
     return jnp.sum(responsibilities * loglik)
 
-
 v_nebnm = vmap(_normal_ebnm_objective, (None, None, None, 0, None), 0)
 
 @jit
 def grid_optimizie_normal_ebnm(beta, se, loc, scale_grid, responsibilities):
   idx = jnp.argmax(v_nebnm(beta, se, loc, scale_grid, responsibilities))
   return scale_grid[idx] 
+
+
+"""
+Scale mixture of normal helpers
+"""
+
+def pi2eta(pi):
+    eta = jnp.log(pi)
+    eta = eta[:-1] - eta[-1]
+    return eta
+
+
+def eta2pi(eta):
+    """
+    map natural parameters to mixture weights
+    just softmax but add a 0 for the last component
+    """
+    eta0 = jnp.concatenate([eta, jnp.array([0.])])
+    return jax.nn.softmax(eta0)
+
+
+# vectorized over scales pdf for mixture computation
+_vec_normal_convolved_logpdf = vmap(
+    _normal_convolved_logpdf,
+    in_axes=(None, None, None, 0), out_axes=1
+)
+
+
+def _nsm_convolved_logpdf(beta, se, loc, scales, pi):
+    """
+    pdf for observations beta with standard errors se, with effects
+    drawn from a mixture of normals
+    """
+    return _vec_normal_convolved_logpdf(beta, se, loc, scales) @ pi
+
+
+# NOTE: written in terms of unconstrained natural parameters
+def lossNSM(beta, se, loc, scales, eta):
+     return jnp.sum(_nsm_convolved_logpdf(
+         beta, se, loc, scales, eta2pi(eta)))
+gradNSM = grad(lossNSM, argnums=4)
+hessNSM = hessian(lossNSM, argnums=4)
+
+
+# NOTE: should be able to do this without explicitly solving
+# "natural graident" descent in exponential families
+def newtonNSM(beta, se, loc, scales, eta):
+    """
+    natural gradient update
+    """
+    ng = jnp.linalg.solve(
+        hessNSM(beta, se, loc, scales, eta), 
+        gradNSM(beta, se, loc, scales, eta)
+    )
+    eta = eta - ng
+    return eta
