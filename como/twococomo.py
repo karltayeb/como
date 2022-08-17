@@ -84,11 +84,33 @@ class TwoComponentCoMo:
             self.data, self.logreg, self.f0, self.f1)
         # self.logreg.data['y'] = self.responsibilities
 
+    def update_logreg(self):
+        """
+        Update the logistic regression
+        """
+        self.logreg.update()
+
+    def update_f0(self):
+        """
+        Update the null component
+        """
+        self.f0.update(self.data)
+
+    def update_f1(self):
+        """
+        Update the alternate component
+        """
+        self.f1.update(self.data)
+
     def iter(self):
+        """
+        iteration updates responsibilities, logistic regression, f0, and f1
+        """
         self.update_responsibilities()
         self.logreg.update()
         self.f0.update(self.data)
         self.f1.update(self.data)
+
 
     def fit(self, niter=100, tol=1e-3):
         for i in range(niter):
