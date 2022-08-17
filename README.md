@@ -5,9 +5,11 @@ Python implimentation of various covariate moderated EBNM
 ### Problem set-up
 
 $$
+\begin{align}
 \hat\beta \sim N(\beta, s^2) \\
 \beta \sim \pi_0(x) f_0 + \pi_1(x) f_1 \\
 \log \frac{\pi_1(x)}{\pi_0(x)} = {\bf \beta}^T {\bf x}
+\end{align}
 $$
 
 
