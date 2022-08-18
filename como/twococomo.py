@@ -9,7 +9,7 @@ from functools import partial
 import jax
 import numpy as np
 
-from .component_distributions import ComponentDistribution, NormalFixedLocComponent, PointMassComponent, UnimodalNormalMixtureComponent
+from .component_distributions import ComponentDistribution, NormalFixedLocComponent, NormalScaleMixtureComponent, PointMassComponent
 from .logistic_regression import InterceptOnly, LogisticRegression, LogisticSusie
 
 class TwoComponentCoMo:
@@ -145,7 +145,7 @@ class PointNormalSuSiE(TwoComponentCoMo):
         logreg = LogisticSusie(data, L=10)
         super().__init__(data, f0, f1, logreg)
 
-class UnimodalNormalMixtureSuSiE(TwoComponentCoMo):
+class PointNormalMixtureSuSiE(TwoComponentCoMo):
     def __init__(self, data, f0_args: dict = {}, f1_args: dict = {}):
         """
         Initialize Point Normal SuSiE
@@ -159,7 +159,7 @@ class UnimodalNormalMixtureSuSiE(TwoComponentCoMo):
             scale: (initial) scale parameter for the normal mixture component
         """
         f0 = PointMassComponent(**f0_args)
-        f1 = UnimodalNormalMixtureComponent(**f1_args)
+        f1 = NormalScaleMixtureComponent(**f1_args)
         
         # TODO: make sure `y` is a key in data, otherwise make it
         data['y'] = np.random.uniform(data['beta'].size)
@@ -185,6 +185,25 @@ class PointNormal(TwoComponentCoMo):
         data['y'] = np.random.uniform(data['beta'].size)
         logreg = InterceptOnly(data)
         super().__init__(data, f0, f1, logreg)
+    
+class PointNormalMixture(TwoComponentCoMo):
+    def __init__(self, data, f0_args: dict = {}, f1_args: dict = {}):
+        """
+        Mixture of a point mass and a scale normal mixture
+        Equivalent to ASH when point mass and normal mixture all share same loc
+    
+        Parameters:
+            data: dictionary with keys
+                'beta' and 'se' for observations and standard errors,
+                'X' and 'Z' for annotations and (fixed) covariates resp.
+        """
+        f0 = PointMassComponent(**f0_args)
+        f1 = NormalScaleMixtureComponent(**f1_args)
+        
+        # TODO: make sure `y` is a key in data, otherwise make it
+        data['y'] = np.ones(data['beta'].size) - 1e-10
+        logreg = InterceptOnly(data)
+        super().__init__(data, f0, f1, logreg)
 
 # The two component covariate moderated EBNM
 def twococomo_compute_responsibilities(data, logreg, f0, f1):
@@ -197,7 +216,7 @@ def twococomo_compute_responsibilities(data, logreg, f0, f1):
     f1_loglik = f1.convolved_logpdf(data['beta'], data['se'])
 
     logits = f1_loglik - f0_loglik + logit_pi
-    responsibilities = jnp.exp(logits)/(1 + jnp.exp(logits))
+    responsibilities = jax.nn.sigmoid(logits) 
     return responsibilities
 
 def twococomo_loglik(data, responsibilities, f0, f1, sum=True):
