@@ -1,8 +1,10 @@
 from abc import ABC, abstractmethod
+from re import I
 from tkinter import W
 from jax import jit, vmap, grad, hessian
 import jax
 import jax.scipy as jsp
+from jax.scipy.special import logsumexp
 import jax.numpy as jnp
 import numpy as np
 
@@ -69,7 +71,7 @@ class NormalFixedLocComponent(ComponentDistribution):
         )
         
 
-class UnimodalNormalMixtureComponent(ComponentDistribution):
+class NormalScaleMixtureComponent(ComponentDistribution):
     def __init__(self, loc: float = 0., scales: np.ndarray = None, pi: np.ndarray = None):
         self.loc = loc
 
@@ -86,12 +88,20 @@ class UnimodalNormalMixtureComponent(ComponentDistribution):
 
 
     def convolved_logpdf(self, beta, se):
-        return _normal_scale_mixture_convolved_pdf(
-            beta, se, self.loc, self.scales, self.pi
+        return _nsm_convolved_logpdf(
+            beta, se, self.loc, self.scales, self.eta
         )
 
-    def update(self, data: dict):
-        self.eta = newtonNSM(data['beta'], data['se'], self.loc, self.scales, self.eta, data['y'])
+    def update(self, data: dict, niter: int = 100):
+        """
+        Update mixture weights via EM (default niter=100)
+        
+        Note: Due to overhead, it's not that much more time-intensive to
+        do 100 iterations of EM vs 1 even when you have 100k observatiosn
+        """
+        L = lambda i, eta: emNSM(
+            data['beta'], data['se'], self.loc, self.scales, eta, data['y'])
+        self.eta = jax.lax.fori_loop(0, niter, L, self.eta)
 
     @property
     def pi(self):
@@ -148,18 +158,21 @@ _vec_normal_convolved_logpdf = vmap(
 )
 
 
-def _nsm_convolved_logpdf(beta, se, loc, scales, pi):
+def _nsm_convolved_logpdf(beta, se, loc, scales, eta):
     """
     pdf for observations beta with standard errors se, with effects
     drawn from a mixture of normals
     """
-    return _vec_normal_convolved_logpdf(beta, se, loc, scales) @ pi
-
+    normal_grid = _vec_normal_convolved_logpdf(beta, se, loc, scales)
+    eta0 = jnp.concatenate([eta, jnp.array([0.])])
+    c = logsumexp(eta0)
+    logpdf = (logsumexp(normal_grid + eta0[None], axis=1) - c)
+    return logpdf
 
 # NOTE: written in terms of unconstrained natural parameters
 def lossNSM(beta, se, loc, scales, eta):
      return jnp.sum(_nsm_convolved_logpdf(
-         beta, se, loc, scales, eta2pi(eta)))
+         beta, se, loc, scales, eta))
 gradNSM = grad(lossNSM, argnums=4)
 hessNSM = hessian(lossNSM, argnums=4)
 
@@ -176,3 +189,35 @@ def newtonNSM(beta, se, loc, scales, eta):
     )
     eta = eta - ng
     return eta
+
+
+"""
+EM updates for scale mixture of normals
+will converge to the global optimum since objective is convex
+"""
+def mix_assignment_prop(beta, se, loc, scales, eta):
+    """
+    compute assignment probabilities
+    """
+    sigmas = jnp.sqrt(se**2 + scales**2)
+    # eta0 = jnp.concatenate([eta, jnp.array([0.])])
+    logpi = jnp.log(eta2pi(eta))
+    loglik = jsp.stats.norm.logpdf(beta, loc, scale=sigmas)
+    return jax.nn.softmax(loglik + logpi)
+
+# vectorize to do over many data points
+mix_assigment_prop_vec = vmap(
+    mix_assignment_prop,
+    (0, 0, None, None, None), 0
+)
+
+@jit
+def emNSM(beta, se, loc, scales, eta, responsibilities = 1.0):
+    """
+    update mixture weights (average of assignment probabilities)
+    """
+    R = mix_assigment_prop_vec(beta, se, loc, scales, eta)
+    Rsum = (responsibilities[:, None] * R).sum(0)
+    pi_new = Rsum / Rsum.sum()
+    return pi2eta(pi_new)
+    
