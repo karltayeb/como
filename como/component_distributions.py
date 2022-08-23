@@ -25,6 +25,30 @@ class ComponentDistribution(ABC):
         """
         pass
 
+    @abstractmethod
+    def mu(self, data):
+        """
+        compute posterior mean of observations in `data`
+        """
+        pass
+
+    @abstractmethod
+    def mu2(self, data):
+        """
+        compute posterior second moment of observations in `data`
+        """
+        pass
+
+    def sd(self, data):
+        """
+        compute posterior second moment of observations in `data`
+        """
+        sd = np.sqrt(self.mu2(data) - self.mu(data)**2)
+        return sd
+
+    def var(self, data):
+        return self.mu2(data) - self.mu(data)**2
+
     def freeze(self):
         self.frozen = True
 
@@ -42,6 +66,12 @@ class PointMassComponent(ComponentDistribution):
         return _normal_convolved_logpdf(
             beta, se, self.loc, 0)
 
+    def mu(self, data):
+        return self.loc * np.ones(data['beta'].size)
+
+    def mu2(self, data):
+        return self.mu(data)**2
+
     def update(self, data):
         pass
 
@@ -55,6 +85,18 @@ class NormalFixedLocComponent(ComponentDistribution):
     def convolved_logpdf(self, beta, se):
         return _normal_convolved_logpdf(
             beta, se, self.loc, self.scale)
+
+    def mu(self, data):
+        tau = 1 / data['se']**2
+        tau0 = 1 / self.var 
+        post_mu = (data['beta'] * tau + tau0 * self.scale) / (tau + tau0)
+        return post_mu
+
+    def mu2(self, data):
+        tau = 1 / data['se']**2
+        tau0 = 1 / self.var
+        post_var = 1 / (tau + tau0)
+        return post_var + self.mu(data)**2
 
     def update(self, data):
         # update by picking mle on a fixed grid
@@ -103,6 +145,49 @@ class NormalScaleMixtureComponent(ComponentDistribution):
             data['beta'], data['se'], self.loc, self.scales, eta, data['y'])
         self.eta = jax.lax.fori_loop(0, niter, L, self.eta)
 
+    def conditional_post_mean(self, data):
+        # likelihood and prior precision
+        tau = 1 / data['se']**2
+        tau0 = 1 / self.var 
+
+        # posterior mean for each component, n X K
+        post_mu = ((data['beta'] * tau)[:, None] + (tau0 * self.scale)[None]) \
+            / (tau[:, None] + tau0[None])
+
+        return post_mu
+
+    def conditional_post_var(self, data):
+        (data['se'][:, None]**2 * self.scales[None]**2) \
+            (data['se'][:, None]**2 + self.scales[None]**2)
+
+    def mu(self, data):
+        """
+        posterior mean of the muxture
+        """
+        # n x K assignment probabilities
+        R = mix_assigment_prop_vec(
+            data['beta'], data['se'],
+            self.loc, self.scales, self.eta
+        )
+        post_mean = self.conditional_post_mean(data)
+
+        # average over components
+        mu = (R * post_mean).sum(1)
+        return mu
+
+    def mu2(self, data):
+        """
+        posterior second moment of the mixture
+        """
+        R = mix_assigment_prop_vec(
+            data['beta'], data['se'],
+            self.loc, self.scales, self.eta
+        )
+
+        post_mean2 = self.conditional_post_var(data) + self.conditional_post_mean(data)**2
+        mu2 = (R * post_mean2).sum(1)
+        return mu2
+    
     @property
     def pi(self):
         return eta2pi(self.eta) 
