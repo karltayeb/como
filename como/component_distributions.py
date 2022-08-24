@@ -87,8 +87,8 @@ class NormalFixedLocComponent(ComponentDistribution):
             beta, se, self.loc, self.scale)
 
     def mu(self, data):
-        tau = 1 / data['se']**2
-        tau0 = 1 / self.var 
+        tau = 1. / data['se']**2
+        tau0 = 1. / self.scale**2
         post_mu = (data['beta'] * tau + tau0 * self.scale) / (tau + tau0)
         return post_mu
 
@@ -147,18 +147,19 @@ class NormalScaleMixtureComponent(ComponentDistribution):
 
     def conditional_post_mean(self, data):
         # likelihood and prior precision
-        tau = 1 / data['se']**2
-        tau0 = 1 / self.var 
+        tau = 1. / data['se']**2
+        tau0 = 1. / self.scales**2
 
         # posterior mean for each component, n X K
-        post_mu = ((data['beta'] * tau)[:, None] + (tau0 * self.scale)[None]) \
+        post_mu = ((data['beta'] * tau)[:, None] + (tau0 * self.loc)[None]) \
             / (tau[:, None] + tau0[None])
 
         return post_mu
 
     def conditional_post_var(self, data):
-        (data['se'][:, None]**2 * self.scales[None]**2) \
-            (data['se'][:, None]**2 + self.scales[None]**2)
+        var = jnp.outer(data['se']**2, self.scales**2) \
+            / ((data['se']**2)[:, None] + (self.scales**2)[None])
+        return var
 
     def mu(self, data):
         """
@@ -302,7 +303,8 @@ def emNSM(beta, se, loc, scales, eta, responsibilities = 1.0):
     update mixture weights (average of assignment probabilities)
     """
     R = mix_assigment_prop_vec(beta, se, loc, scales, eta)
-    Rsum = (responsibilities[:, None] * R).sum(0)
+    r = jnp.atleast_2d(responsibilities).T  # works for scalar and vector
+    Rsum = (r * R).sum(0)
     pi_new = Rsum / Rsum.sum()
     return pi2eta(pi_new)
     
