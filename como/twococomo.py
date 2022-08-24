@@ -74,7 +74,7 @@ class TwoComponentCoMo:
             + mu1 * self.responsibilities
         return mu
 
-    @property(self)
+    @property
     def post_mean2(self):
         # compute mixture 2nd moment
         mu20 = self.f0.mu2(self.data)
