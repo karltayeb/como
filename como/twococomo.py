@@ -74,20 +74,24 @@ class TwoComponentCoMo:
             + mu1 * self.responsibilities
         return mu
 
-    @property
-    def post_var(self):
-        """
-        posterior variance
-        """
+    @property(self)
+    def post_mean2(self):
         # compute mixture 2nd moment
         mu20 = self.f0.mu2(self.data)
         mu21 = self.f1.mu2(self.data)
         mu2 = mu20 * (1 - self.responsibilities) \
             + mu21 * self.responsibilities 
-        
+        return mu2
+
+    @property
+    def post_var(self):
+        """
+        posterior variance
+        """ 
         # compute mixture mean
+        post_mu2 = self.post_mean2
         post_mu = self.post_mean 
-        post_var = mu2 - post_mu**2
+        post_var = post_mu2 - post_mu**2
         return post_var
 
     def loglik(self):
