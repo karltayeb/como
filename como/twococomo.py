@@ -86,7 +86,7 @@ class TwoComponentCoMo:
             + mu21 * self.responsibilities 
         
         # compute mixture mean
-        post_mu = self.post_mean() 
+        post_mu = self.post_mean 
         post_var = mu2 - post_mu**2
         return post_var
 
