@@ -9,8 +9,9 @@ import jax.numpy as jnp
 import numpy as np
 
 class ComponentDistribution(ABC):
-    def __init__(self):
+    def __init__(self, index: int=None):
         self.frozen = False
+        self.index = index
 
     @abstractmethod
     def convolved_logpdf(self, beta, se, sigma0):
@@ -55,11 +56,23 @@ class ComponentDistribution(ABC):
     def thaw(self):
         self.frozen = False
 
+    def get_weights(self, data):
+        """
+        get weights from data
+        if index is none, take data['y']
+        otherwise take data['alpha'][index]
+        """
+        if self.index is None:
+            weights = data['y']
+        else:
+            weights = data['alpha'][self.index]
+        return weights
+
 
 
 class PointMassComponent(ComponentDistribution):
-    def __init__(self, loc: float = 0.):
-        super().__init__()
+    def __init__(self, loc: float = 0., index=None):
+        super().__init__(index=index)
         self.loc = loc
 
     def convolved_logpdf(self, beta, se):
@@ -76,8 +89,8 @@ class PointMassComponent(ComponentDistribution):
         pass
 
 class NormalFixedLocComponent(ComponentDistribution):
-    def __init__(self, loc=0., scale=1.):
-        super().__init__()
+    def __init__(self, loc=0., scale=1., index=None):
+        super().__init__(index=index)
         self.loc = loc
         self.scale = scale
         self.scale_grid = np.linspace(0.1, 100, 1000)  # fixed grid
@@ -104,17 +117,21 @@ class NormalFixedLocComponent(ComponentDistribution):
         if self.frozen:
             return None
 
+        weights = self.get_weights(data)
+
         self.scale = grid_optimizie_normal_ebnm(
             beta=data['beta'], 
             se=data['se'],
             loc=self.loc,
             scale_grid=self.scale_grid,
-            responsibilities=data['y']
+            responsibilities=weights
         )
         
 
 class NormalScaleMixtureComponent(ComponentDistribution):
-    def __init__(self, loc: float = 0., scales: np.ndarray = None, pi: np.ndarray = None):
+    def __init__(self, loc: float = 0., scales: np.ndarray = None, pi: np.ndarray = None, index: int=None):
+        super().__init__(index=index)
+
         self.loc = loc
 
         # TODO: pick sensible default for scale mixture-- what does ASH do?
@@ -141,8 +158,9 @@ class NormalScaleMixtureComponent(ComponentDistribution):
         Note: Due to overhead, it's not that much more time-intensive to
         do 100 iterations of EM vs 1 even when you have 100k observatiosn
         """
+        weights = self.get_weights(data)
         L = lambda i, eta: emNSM(
-            data['beta'], data['se'], self.loc, self.scales, eta, data['y'])
+            data['beta'], data['se'], self.loc, self.scales, eta, weights)
         self.eta = jax.lax.fori_loop(0, niter, L, self.eta)
 
     def conditional_post_mean(self, data):
