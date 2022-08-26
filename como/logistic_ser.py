@@ -45,23 +45,11 @@ def Xb2_ser(data, params, offset):
     return Q
 
 
-def loglik_ser_lower_bound(data, params, offset=0):
-    '''
-    Compute a lower bound to the expected conditional log likelihood
-    E[lnp(y | X, Z, beta, delta)]
-
-    Really it's computing
-    E[lnp(y, w| X, Z, beta, delta) - q(w)] 
-    where w are the PG latent variables
-    '''
-    Xb = Xb_ser(data, params, offset)
-    Xb2 = Xb2_ser(data, params, offset)
-    loglik = jnp.log(sigmoid(params['xi'])) + \
-        (data['y'] - 0.5) * Xb + -0.5 * params['xi'] + \
-        -lamb(params['xi']) * (Xb2 - params['xi']**2)
-    return(loglik)
-
 def jj_ser(data, params, offset = 0.):
+    """
+    Jaakola jordan bound
+    equivalent (up to a constant?) to E[p(y | b, w) - q(w)]
+    """
     xi = params['xi']
     Xb = Xb_ser(data, params, offset)
     Xb2 = Xb2_ser(data, params, offset) 
@@ -73,16 +61,6 @@ def jj_ser(data, params, offset = 0.):
         - 0.5 * xi \
         + 0.5 * omega * (Xb2 - xi**2)
 
-def jj_ser2(data, params, offset=0.):
-    loglik = loglik_ser(data, params, offset) 
-    kl = polya_gamma_kl(data.get('N', 1.), params['xi'])
-    return loglik - kl #- jnp.log(2)
-
-def elbo_ser_old(data, params, hypers, offset):
-    '''Compute ELBO for logistic SER'''
-    loglik = jnp.sum(jj_ser2(data, params, offset))
-    kl = ser_kl(params, hypers)
-    return loglik - kl
 
 def loglik_ser(data, params, offset=0):
     """
@@ -103,19 +81,16 @@ def loglik_ser(data, params, offset=0):
 def elbo_ser(data, params, hypers, offset):
     '''Compute ELBO for logistic SER'''
     loglik = jnp.sum(
-        loglik_ser(data, params, offset) - polya_gamma_kl(data.get('N', 1.), params['xi'])
+        loglik_ser(data, params, offset)
+        - polya_gamma_kl(data.get('N', 1.), params['xi'])
     )
     kl = ser_kl(params, hypers)
     return loglik - kl
 
+
 def _compute_kappa(data):
     return data['y'] - 0.5 * data.get('N', 1.)
 
-def _compute_nu_old(data, params, hypers, offset):
-    Xb = offset + data['Z'] @ params['delta']
-    tmp = data['y'] - 0.5 - (2 * lamb(params['xi']) * Xb)  #[n]
-    nu = tmp @ data['X']
-    return nu
 
 def _compute_nu(data, params, hypers, offset):
     """
@@ -131,9 +106,6 @@ def _compute_nu(data, params, hypers, offset):
     nu = tmp @ data['X']
     return nu
 
-def _compute_tau_old(data, xi):
-    tau = 2 * lamb(xi) @ (data['X']**2)
-    return tau
 
 def _compute_tau(data, xi):
     """
