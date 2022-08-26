@@ -17,6 +17,11 @@ def expected_beta_ser(params):
 
 
 def ser_kl(params, hypers):
+    """
+    Compute KL(q(\beta_l) || p(\beta_l))
+    the KL divergence between the variational approximation to the posterior
+    and the SER prior
+    """
     return categorical_kl(params['alpha'], hypers['pi']) \
             + jnp.sum(params['alpha'] * normal_kl(
                 params['mu'], params['var'], 0, hypers['sigma0']**2))
@@ -40,37 +45,103 @@ def Xb2_ser(data, params, offset):
     return Q
 
 
-def loglik_ser(data, params, offset=0):
+def loglik_ser_lower_bound(data, params, offset=0):
     '''
-    Compute expected log likelihood E[lnp(y | X, Z, beta, delta)]
-    per data point
+    Compute a lower bound to the expected conditional log likelihood
+    E[lnp(y | X, Z, beta, delta)]
+
+    Really it's computing
+    E[lnp(y, w| X, Z, beta, delta) - q(w)] 
+    where w are the PG latent variables
     '''
     Xb = Xb_ser(data, params, offset)
-    # loglik = jnp.log(sigmoid(params['xi'])) + \
-    #     (data['y'] - 0.5) * Xb + -0.5 * params['xi']
     Xb2 = Xb2_ser(data, params, offset)
     loglik = jnp.log(sigmoid(params['xi'])) + \
         (data['y'] - 0.5) * Xb + -0.5 * params['xi'] + \
         -lamb(params['xi']) * (Xb2 - params['xi']**2)
     return(loglik)
 
+def jj_ser(data, params, offset = 0.):
+    xi = params['xi']
+    Xb = Xb_ser(data, params, offset)
+    Xb2 = Xb2_ser(data, params, offset) 
+    kappa = _compute_kappa(data)
+    omega = polya_gamma_mean(data.get('N', 1.), params['xi'])
+
+    return jnp.log(jax.nn.sigmoid(xi)) \
+        + kappa * Xb \
+        - 0.5 * xi \
+        + 0.5 * omega * (Xb2 - xi**2)
+
+def jj_ser2(data, params, offset=0.):
+    loglik = loglik_ser(data, params, offset) 
+    kl = polya_gamma_kl(data.get('N', 1.), params['xi'])
+    return loglik - kl #- jnp.log(2)
+
+def elbo_ser_old(data, params, hypers, offset):
+    '''Compute ELBO for logistic SER'''
+    loglik = jnp.sum(jj_ser2(data, params, offset))
+    kl = ser_kl(params, hypers)
+    return loglik - kl
+
+def loglik_ser(data, params, offset=0):
+    """
+    Compute the expected conditional data likelihood E[p(y | beta, omega)]
+    y are the observed counts
+    beta are the regression coefficients
+    omega are the latent PG variables
+    """
+    Xb = Xb_ser(data, params, offset)
+    Xb2 = Xb2_ser(data, params, offset)
+    omega = polya_gamma_mean(data.get('N', 1.), params['xi'])
+    
+    # TODO: figure out how to index alpha, for when we use it in mococomo
+    kappa = _compute_kappa(data)
+    loglik =  kappa * Xb - 0.5 * omega * Xb2
+    return loglik
 
 def elbo_ser(data, params, hypers, offset):
     '''Compute ELBO for logistic SER'''
-    loglik = jnp.sum(loglik_ser(data, params, offset))
+    loglik = jnp.sum(
+        loglik_ser(data, params, offset) - polya_gamma_kl(data.get('N', 1.), params['xi'])
+    )
     kl = ser_kl(params, hypers)
-    return loglik + kl
+    return loglik - kl
 
+def _compute_kappa(data):
+    return data['y'] - 0.5 * data.get('N', 1.)
 
-def _compute_eta(data, params, hypers, offset):
+def _compute_nu_old(data, params, hypers, offset):
     Xb = offset + data['Z'] @ params['delta']
     tmp = data['y'] - 0.5 - (2 * lamb(params['xi']) * Xb)  #[n]
-    eta = tmp @ data['X']
-    return eta
+    nu = tmp @ data['X']
+    return nu
 
+def _compute_nu(data, params, hypers, offset):
+    """
+    compute a scaled posterior mean parameter
+    """
+    kappa = _compute_kappa(data) 
+
+    # when running SuSiE offset should be the residual (Xb - E[b_l])
+    # when offset is 0, we do not need to compute omega
+    r = offset + data['Z'] @ params['delta']
+    omega = polya_gamma_mean(data.get('N', 1.), params['xi'])
+    tmp = kappa - omega * r
+    nu = tmp @ data['X']
+    return nu
+
+def _compute_tau_old(data, xi):
+    tau = 2 * lamb(xi) @ (data['X']**2)
+    return tau
 
 def _compute_tau(data, xi):
-    tau = 2 * lamb(xi) @ (data['X']**2)
+    """
+    compute precision parameter (partial)
+    only need to call once per update of xi
+    """
+    omega = polya_gamma_mean(data.get('N', 1.), xi)
+    tau = omega @ (data['X']**2)
     return tau
 
 
@@ -96,22 +167,26 @@ def update_b_ser(data, params, hypers, offset):
     Update variational parameters assocaited with SER (mu, var, alpha)
     return a dictionary with updated values
     '''
-    eta = _compute_eta(data, params, hypers, offset)
+    nu = _compute_nu(data, params, hypers, offset)
     tau = (1 / hypers['sigma0']**2) + params['tau']  # only comput when we update xi
     logits = jnp.log(hypers['pi']) \
         - 0.5 * jnp.log(tau) \
-        + 0.5 * eta**2/tau
+        + 0.5 * nu**2/tau
     logits = logits - logsumexp(logits)
     alpha = jnp.exp(logits)
     alpha = alpha / alpha.sum()
     post = {
-        'mu': eta/tau,
+        'mu': nu/tau,
         'var': 1/tau,
         'alpha': alpha
     }
     return post
 
 def update_sigma0(data, params, hypers, offset):
+    """
+    Variational M-step for sigma0
+    Maximizes ELBO wrt point estimate sigma0
+    """
     b2 = params['alpha'] * (params['mu']**2 + params['var'])
     sigma0 = jnp.sqrt(jnp.sum(b2))
     return sigma0
