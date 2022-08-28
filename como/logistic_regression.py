@@ -60,11 +60,12 @@ class LogisticSusie(LogisticRegression):
     Parameters:
         data: a dictionary with keys 'y', 'X', and 'Z' for binary response, annotations, and fixed covariates resp.
         L: number of single effects
+        idx: the index, if we are holding information for multiple objects in data
     """
-    def __init__(self, data, L=10):
+    def __init__(self, data, L=10, idx=None):
         super().__init__(data)
-        self.params, self.hypers = init_susie(data, L)
-        self.params.update(update_xi_susie(self.data, self.params))
+        self.params, self.hypers = init_susie(data, L, idx)
+        self.params.update(update_xi_susie(self.data, self.params, self.hypers))
         self.L = L
 
     def predict(self, X=None):
