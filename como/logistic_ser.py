@@ -87,32 +87,46 @@ def elbo_ser(data, params, hypers, offset):
     kl = ser_kl(params, hypers)
     return loglik - kl
 
+def _get_y(data, hypers):
+    idx = hypers.get('idx', None)
+    if idx is None:
+        y = data['y']
+    else:
+        y = data['Y'][:, idx]
+    return y
 
-def _compute_kappa(data):
-    return data['y'] - 0.5 * data.get('N', 1.)
+def _get_N(data, hypers):
+    idx = hypers.get('idx', None)
+    if idx is None:
+        N = data.get('n', 1.)
+    else:
+        N = data['N'][:, idx]
+    return N
 
+def _compute_kappa(data, hypers):
+    return _get_y(data, hypers) - 0.5 * _get_N(data, hypers)
 
 def _compute_nu(data, params, hypers, offset):
     """
     compute a scaled posterior mean parameter
     """
-    kappa = _compute_kappa(data) 
+    kappa = _compute_kappa(data, hypers) 
 
     # when running SuSiE offset should be the residual (Xb - E[b_l])
     # when offset is 0, we do not need to compute omega
     r = offset + data['Z'] @ params['delta']
-    omega = polya_gamma_mean(data.get('N', 1.), params['xi'])
+    omega = polya_gamma_mean(_get_N(data, hypers), params['xi'])
     tmp = kappa - omega * r
     nu = tmp @ data['X']
     return nu
 
 
-def _compute_tau(data, xi):
+def _compute_tau(data, hypers, xi):
     """
     compute precision parameter (partial)
     only need to call once per update of xi
     """
-    omega = polya_gamma_mean(data.get('N', 1.), xi)
+    omega = polya_gamma_mean(_get_N(data, hypers), xi)
     tau = omega @ (data['X']**2)
     return tau
 
@@ -121,7 +135,7 @@ def update_xi_ser(data, params, hypers, offset):
     '''update variational parameters for logistic approximation'''
     Xb2 = Xb2_ser(data, params, offset)
     xi = jnp.clip(jnp.sqrt(jnp.abs(Xb2)), 1e-20, 1e20)
-    tau = _compute_tau(data, xi)
+    tau = _compute_tau(data, hypers, xi)
     return dict(xi=xi, tau=tau)
 
 
@@ -130,7 +144,8 @@ def update_delta_ser(data, params, hypers, offset):
     Z = data['Z']
     D = 2 * lamb(params['xi'])
     Xb = data['X'] @ expected_beta_ser(params) + offset
-    delta = jnp.linalg.solve((D * Z.T) @ Z, Z.T @ (data['y'] - 0.5 - D * Xb))
+    y = _get_y(data, hypers)
+    delta = jnp.linalg.solve((D * Z.T) @ Z, Z.T @ (y - 0.5 - D * Xb))
     return delta
 
 
