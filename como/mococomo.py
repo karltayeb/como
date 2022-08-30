@@ -1,4 +1,5 @@
 from operator import length_hint
+from tkinter import W
 from typing import List
 
 from .component_distributions import ComponentDistribution
@@ -7,6 +8,7 @@ from .utils import categorical_entropy_vec
 
 import jax.numpy as jnp
 import jax
+import numpy as np
 
 class MoreComponentCoMo:
     def __init__(self, data, f_list: List[ComponentDistribution], logreg_list: List[LogisticRegression]):
@@ -20,10 +22,14 @@ class MoreComponentCoMo:
         """
         self.data = data
         self.f_list = f_list
-        self.logreg_list = logreg_list  # TODO: pad with a Kth logistic regression that predicts 1.
-        self.data['alpha'] = mococomo_compute_responsibilities(
+        self.logreg_list = logreg_list
+
+        # initialize data for logistic regressions
+        self.data['Y'] = mococomo_compute_responsibilities(
             self.data, self.f_list, self.logreg_list
         )
+        self.data['N'] = 1. - (jnp.cumsum(self.data['Y'], 1) - self.data['Y'])
+
         self.elbo_history = []
 
     @property
@@ -31,15 +37,15 @@ class MoreComponentCoMo:
         """
         posterior assignment probability N x K matrix
         """
-        return np.array(self.data['alpha'])
+        return np.array(self.data['Y'])
 
     @property
-    def prior_log_odds(self):
+    def prior_assigment_probability(self):
         """
         return the (expected) prior log odds for each observation
         this is the (expectation of) the prediction from the logistic regression model
         """
-        return np.array(self.logreg.predict())
+        return mococomo_prior_mixture_weights(self.logreg_list)
 
     @property
     def beta(self):
@@ -65,7 +71,7 @@ class MoreComponentCoMo:
         # TODO: compute mixture mean
         pass
         
-    @property(self)
+    @property
     def post_mean2(self):
         # compute mixture 2nd moment
         pass
@@ -80,10 +86,10 @@ class MoreComponentCoMo:
 
     def loglik(self):
         return mococomo_loglik(
-            self.data, self.f_list, self.logreg_list
+            self.data, self.f_list, self.responsibilities 
         )
 
-    def elbo(self, record: Boolean = False):
+    def elbo(self, record: bool = False):
         new_elbo = mococomo_elbo(
             self.data, self.f_list, self.logreg_list, self.responsibilities
         )
@@ -94,10 +100,12 @@ class MoreComponentCoMo:
     def update_responsibilities(self):
         """
         update the responsibilities and pass values to logreg
+        since this is MoCoCoMo, we need to also record cumulative probabilities
         """
-        self.data['alpha'] = mococomo_compute_responsibilities(
+        self.data['Y'] = mococomo_compute_responsibilities(
             self.data, self.f_list, self.logreg_list
         )
+        self.data['N'] = 1. - (jnp.cumsum(self.data['Y'], 1) - self.data['Y'])
 
     def update_logreg(self):
         """
@@ -153,6 +161,7 @@ def pi_tilde2pi(pi_tilde):
     pi_tilde[k] = P(draw k given we did not draw 1... k-1)
     pi[k] = P(draw k)
     """
+    # append conditional probability of last state
     pi_tilde = jnp.concatenate([pi_tilde, jnp.array([1.0])])
     _, pi = jax.lax.scan(pi_scanner, init=0., xs = pi_tilde)
     return pi
@@ -168,6 +177,8 @@ def mococomo_prior_mixture_weights(logreg_list: List[LogisticRegression]):
     """
     # K-1 x N with the last row all ones
     pi_tilde = jnp.array([jax.nn.sigmoid(lr.predict()) for lr in logreg_list]).T
+
+    # K x N
     pi = pi_tilde2pi_vec(pi_tilde)
     return pi
 
@@ -209,15 +220,18 @@ def mococomo_loglik(data: dict, f_list: List[ComponentDistribution], pi: jnp.nda
 
 
 def mococomo_elbo(data, f_list, logreg_list, responsibilities):
-    data_loglik = mococomo_loglik(data, f_list, responsibilities, sum = False)
-    assignment_entropy = categorical_entropy_vec(responsibilities)
-
-    logreg_elbo = logreg.evidence()
-    total_elbo = jnp.sum(data_loglik + assignment_entropy) + logreg_elbo
+    data_loglik = jnp.sum(mococomo_loglik(data, f_list, responsibilities, sum = False))
+    assignment_loglik = 0
+    assignment_entropy = jnp.sum(categorical_entropy_vec(responsibilities))
+    kl = 0
+    # logreg_elbo = sum([ll.evidence() for ll in logreg_list])
+    total_elbo = data_loglik + assignment_loglik + assignment_entropy - kl
+    
     return dict(
         data_loglik=data_loglik,
+        assignment_loglik=assignment_loglik,
         assignment_entropy=assignment_entropy,
-        logistic_elbo=logreg_elbo,
+        kl=kl,
         total_elbo=total_elbo)
 
 
