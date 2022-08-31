@@ -55,15 +55,10 @@ def loglik_susie(data, params, hypers):
     Xb = Xb_susie(data, params)
     Xb2 = params['xi']**2  # alt: Xb2_susie(data, params)
     kappa = _compute_kappa(data, hypers)
-    omega = polya_gamma_mean(_get_N(data, hypers), params['xi'])
-    loglik = kappa * Xb - 0.5 * omega * Xb2
+    n = _get_N(data, hypers)
+    omega = polya_gamma_mean(n, params['xi'])
+    loglik = kappa * Xb - 0.5 * omega * Xb2 - n * jnp.log(2)
     return loglik
-    #Xb2 = Xb2_susie(data, params)
-    # res = jnp.log(sigmoid(params['xi'])) + \
-    #     (_get_y(data, hypers) - 0.5) * Xb + \
-    #     -0.5 * params['xi'] + \
-    #     0 # -lamb(params['xi']) * (Q - params['xi']**2)
-    # return(res)
 
 @jit
 def elbo_susie(data, params, hypers):
