@@ -5,8 +5,8 @@ from functools import partial
 import jax
 from jax import jit
 
-from .logistic_ser import expected_beta_ser, Xb_ser, iter_ser, ser_kl, _compute_tau, _compute_kappa, _get_y, _get_N
-from .utils import polya_gamma_mean, polya_gamma_kl, sigmoid
+from .logistic_ser import expected_beta_ser, Xb_ser, iter_ser, ser_kl, pg_kl, _compute_tau, _compute_kappa, _get_y, _get_N
+from .utils import polya_gamma_mean, sigmoid
 
 # compute KL for each SER, vectorized
 v_ser_kl = jax.vmap(ser_kl, (
@@ -67,10 +67,8 @@ def loglik_susie(data, params, hypers):
 
 @jit
 def elbo_susie(data, params, hypers):
-    loglik = jnp.sum(
-        loglik_susie(data, params, hypers) - polya_gamma_kl(_get_N(data, hypers), params['xi'])
-    )
-    kl = susie_kl(params, hypers)
+    loglik = jnp.sum(loglik_susie(data, params, hypers))
+    kl = susie_kl(params, hypers) + pg_kl(data, params, hypers)
     return loglik - kl
 
 def update_xi_susie(data, params, hypers):

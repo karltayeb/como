@@ -26,6 +26,12 @@ def ser_kl(params, hypers):
             + jnp.sum(params['alpha'] * normal_kl(
                 params['mu'], params['var'], 0, hypers['sigma0']**2))
 
+def pg_kl(data, params, hypers):
+    """
+    KL(PG(N, xi) || PG(N, 0))
+    summed across observations
+    """
+    return jnp.sum(polya_gamma_kl(_get_N(data, hypers), params['xi']))
 
 def Xb_ser(data, params, offset=0):
     '''Computes E[X \beta + Z \delta + offset]'''
@@ -80,11 +86,8 @@ def loglik_ser(data, params, offset=0):
 
 def elbo_ser(data, params, hypers, offset):
     '''Compute ELBO for logistic SER'''
-    loglik = jnp.sum(
-        loglik_ser(data, params, offset)
-        - polya_gamma_kl(data.get('N', 1.), params['xi'])
-    )
-    kl = ser_kl(params, hypers)
+    loglik = jnp.sum(loglik_ser(data, params, offset))
+    kl = ser_kl(params, hypers) + pg_kl(data, params, hypers)
     return loglik - kl
 
 def _get_y(data, hypers):
