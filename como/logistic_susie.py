@@ -66,11 +66,30 @@ def loglik_susie(data, params, hypers):
     loglik = kappa * Xb - 0.5 * omega * Xb2 - n * jnp.log(2)
     return loglik
 
+
+def jj_susie(data, params, hypers):
+    """
+    Jaakola jordan bound
+    equivalent (up to a constant?) to E[ln p(y | b, w) + lnp(w) - lnq(w)]
+    """
+    xi = params['xi']
+    Xb = Xb_susie(data, params)
+    kappa = _compute_kappa(data, hypers)
+    n = _get_N(data, hypers)
+    return jnp.log(jax.nn.sigmoid(xi)) \
+        + kappa * Xb \
+        - 0.5 * n * xi
+
+
 @jit
 def elbo_susie(data, params, hypers):
-    loglik = jnp.sum(loglik_susie(data, params, hypers))
-    kl = susie_kl(params, hypers) + pg_kl(data, params, hypers)
-    return loglik - kl
+    # loglik = jnp.sum(loglik_susie(data, params, hypers))
+    # kl = susie_kl(params, hypers) + pg_kl(data, params, hypers)
+    # elbo = loglik - kl
+    jj = jnp.sum(jj_susie(data, params, hypers))
+    kl = susie_kl(params, hypers) # + pg_kl(data, params, hypers)
+    elbo = jj - kl
+    return elbo
 
 
 def update_xi_susie(data, params, hypers):
@@ -122,8 +141,7 @@ def susie_update_ser(carry, val):
         update_b=True,
         update_delta=True,
         update_xi=False,
-        update_hypers=False,
-        track_elbo=False
+        update_hypers=False
     )
     params.pop('xi')
     params.pop('tau')
@@ -207,4 +225,10 @@ def fit_susie(data, L, niter=10, tol=1e-3):
 
     # clean up elbo history
     elbo = elbo[:iter][::-1]
-    return params, hypers, elbo, diff, iter
+
+    return dict(
+        params=params,
+        hypers=hypers,
+        elbo=elbo,
+        diff=diff,
+        iter=iter)

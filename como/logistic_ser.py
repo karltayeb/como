@@ -63,19 +63,21 @@ def Xb2_ser(data, params, offset):
 def jj_ser(data, params, hypers, offset = 0.):
     """
     Jaakola jordan bound
-    equivalent (up to a constant?) to E[p(y | b, w) - q(w)]
+    equivalent (up to a constant?) to E[ln p(y | b, w) + lnp(w) - lnq(w)]
     """
+    # Note: including commented lines will make bound valid for any xi
+    # rather than just optimal xi
     xi = params['xi']
     Xb = Xb_ser(data, params, offset)
-    Xb2 = Xb2_ser(data, params, offset) 
-    kappa = _compute_kappa(data)
+    # Xb2 = Xb2_ser(data, params, offset) 
+    kappa = _compute_kappa(data, hypers)
     n = _get_N(data, hypers)
-    omega = polya_gamma_mean(n, params['xi'])
+    # omega = polya_gamma_mean(n, params['xi'])
 
     return jnp.log(jax.nn.sigmoid(xi)) \
         + kappa * Xb \
-        - 0.5 * xi \
-        + 0.5 * omega * (Xb2 - xi**2)
+        - 0.5 * n * xi \
+        # + 0.5 * omega * (Xb2 - xi**2)
 
 
 def loglik_ser(data, params, hypers, offset=0):
@@ -98,12 +100,25 @@ def loglik_ser(data, params, hypers, offset=0):
 
 def elbo_ser(data, params, hypers, offset):
     '''Compute ELBO for logistic SER'''
-    loglik = jnp.sum(loglik_ser(data, params, hypers, offset))
-    kl = ser_kl(params, hypers) + pg_kl(data, params, hypers)
-    return loglik - kl
+
+    # More explicit implimentation, but numerical issues
+    # E[lnp(y | b, omega)] - KL(q(b, omega) || p(b, omega))
+    # loglik = jnp.sum(loglik_ser(data, params, hypers, offset))
+    # kl = ser_kl(params, hypers) + pg_kl(data, params, hypers)
+
+    # this is more stable since we are not computing sum(Xb2 - xi**2) = 0
+    # note this is only valid with updated xi (PG variational parameter) 
+    jj = jnp.sum(jj_ser(data, params, hypers, 0.))
+    kl = ser_kl(params, hypers)
+    return jj - kl
 
 
 def _get_y(data, hypers):
+    """
+    get observed binomial counts
+    this just serves to have multiple y's in the data dict
+    which keeps the implimentation of mococomo cleaner
+    """
     idx = hypers.get('idx', None)
     if idx is None:
         y = data['y']
@@ -113,6 +128,11 @@ def _get_y(data, hypers):
 
 
 def _get_N(data, hypers):
+    """
+    get the number of trials 
+    this just serves to have multiple y's in the data dict
+    which keeps the implimentation of mococomo cleaner 
+    """
     idx = hypers.get('idx', None)
     if idx is None:
         N = data.get('n', 1.)
@@ -130,6 +150,7 @@ def _compute_nu(data, params, hypers, offset):
     compute a scaled posterior mean parameter
     """
     kappa = _compute_kappa(data, hypers) 
+    # TODO: figure out how to include a non-zero priro mean!
 
     # when running SuSiE offset should be the residual (Xb - E[b_l])
     # when offset is 0, we do not need to compute omega
@@ -145,6 +166,9 @@ def _compute_tau(data, hypers, xi):
     compute precision parameter (partial)
     only need to call once per update of xi
     """
+
+    # TODO: maybe make this take arguments n, xi, and X
+    # this function 
     omega = polya_gamma_mean(_get_N(data, hypers), xi)
     tau = omega @ (data['X']**2)
     return tau
@@ -179,8 +203,9 @@ def update_b_ser(data, params, hypers, offset):
         - 0.5 * jnp.log(tau) \
         + 0.5 * nu**2/tau
     logits = logits - logsumexp(logits)
-    alpha = jnp.exp(logits)
-    alpha = alpha / alpha.sum()
+    #alpha = jnp.exp(logits)
+    #alpha = alpha / alpha.sum()
+    alpha = jax.nn.softmax(logits)
     post = {
         'mu': nu/tau,
         'var': 1/tau,
@@ -211,13 +236,13 @@ def init_ser(data):
         'tau': jnp.ones(p)
     }
     hypers = {
-        'sigma0': 100.,
+        'sigma0': 1.,
         'pi': jnp.ones(p)/p
     }
     return params, hypers
 
-@partial(jit, static_argnums=(4, 5, 6, 7, 8))
-def iter_ser(data, params, hypers, offset, update_b=True, update_delta=True, update_xi=True, update_hypers=True, track_elbo=True):
+@partial(jit, static_argnums=(4, 5, 6, 7))
+def iter_ser(data, params, hypers, offset, update_b=True, update_delta=True, update_xi=True, update_hypers=True):
     """
     Single iteration of SER
     """
@@ -245,6 +270,7 @@ def fit_ser(data, offset=0, control={}, niter=100, tol=1e-3):
         y=jax.device_put(data['y']),
         Z=jax.device_put(data['Z'])
     ))
+    track_elbo = control.pop('track_elbo', True)
     control = FrozenDict(control)
 
     def f_iter(val):
@@ -253,7 +279,7 @@ def fit_ser(data, offset=0, control={}, niter=100, tol=1e-3):
         #update
         params, hypers = iter_ser(data, params, hypers, offset, **control)
         # book keeping
-        if control.get('track_elbo', True):
+        if track_elbo:
             new_elbo = elbo_ser(data, params, hypers, offset)
             diff = jnp.abs(new_elbo - elbo[0])
             elbo = jnp.concatenate([
