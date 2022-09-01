@@ -18,6 +18,7 @@ def polya_gamma_mean(b, c):
     """
     Mean of PG(b, c)
     """
+    # TODO: PG(b, 0) = b/4, deal with divide by 0
     return 0.5 * b/c * jnp.tanh(c/2)
 
 
