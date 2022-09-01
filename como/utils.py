@@ -3,7 +3,7 @@ import numpy as np
 import jax
 
 def sigmoid(x):
-    return 0.5 * (jnp.tanh(x / 2) + 1)
+    return jax.nn.sigmoid(x)
 
 
 def lamb(xi):
@@ -36,8 +36,11 @@ def polya_gamma_kl(b, c):
     Note that while we can't write the density in closed form
     the density ratio is available due to exponential tilting
     """
-    return -0.5 * c**2 * polya_gamma_mean(b, c) + b * jnp.log(jnp.cosh(c/2))
-
+    # if jnp.isclose(c, 0):
+    #     kl = 0
+    # else:
+    kl = -0.5 * c**2 * polya_gamma_mean(b, c) + b * jnp.log(jnp.cosh(c/2))
+    return kl
 
 # entropy
 def bernoulli_entropy(p):
