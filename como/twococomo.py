@@ -156,7 +156,7 @@ class TwoComponentCoMo:
 
 
 class PointNormalSuSiE(TwoComponentCoMo):
-    def __init__(self, data, scale=1.0):
+    def __init__(self, data, scale=1.0, L=10):
         """
         Initialize Point Normal SuSiE
         (Covariatiate EBNM with "point-normal" effects,
@@ -173,11 +173,11 @@ class PointNormalSuSiE(TwoComponentCoMo):
         
         # TODO: make sure `y` is a key in data, otherwise make it
         data['y'] = np.random.uniform(data['beta'].size)
-        logreg = LogisticSusie(data, L=10)
+        logreg = LogisticSusie(data, L=L)
         super().__init__(data, f0, f1, logreg)
 
 class PointNormalMixtureSuSiE(TwoComponentCoMo):
-    def __init__(self, data, f0_args: dict = {}, f1_args: dict = {}):
+    def __init__(self, data, L=10, f0_args: dict = {}, f1_args: dict = {}):
         """
         Initialize Point Normal SuSiE
         (Covariatiate EBNM with "point-normal" effects,
@@ -194,7 +194,7 @@ class PointNormalMixtureSuSiE(TwoComponentCoMo):
         
         # TODO: make sure `y` is a key in data, otherwise make it
         data['y'] = np.random.uniform(data['beta'].size)
-        logreg = LogisticSusie(data, L=10)
+        logreg = LogisticSusie(data, L=L)
         super().__init__(data, f0, f1, logreg)
     
 
