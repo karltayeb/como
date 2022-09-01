@@ -2,8 +2,42 @@
 
 Python implimentation of various covariate moderated EBNM
 
-### Problem set-up
+## Setup/installation
 
+1. Clone this repository
+```
+git clone https://github.com/karltayeb/como.git
+cd como
+```
+
+1. Create a conda environment, the environment is named `como`
+
+```
+env create -f environment.yml
+```
+
+1. Activate the conda environment and install `como`
+### Problem set-up
+```
+conda activate como  # make sure you're in the como
+pip install .
+```
+
+
+To ugrade, from inside the `como` repository,
+```
+conda activate como  # make sure you're in the como environment
+git pull  # get current version
+pip install .
+```
+
+You can also use the como package in `R` by pointing `reticulate` to the conda environment we just made.
+
+```
+reticulate::use_condaenv(condaenv='como')
+```
+
+1.
 $$
 \begin{align}
 \hat\beta \sim N(\beta, s^2) \\
