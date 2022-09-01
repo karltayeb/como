@@ -84,13 +84,15 @@ class LogisticSER(LogisticRegression):
             X = self.data['X']
         return Xb2_ser(self.data, self.params)
 
-    def update(self):
+    def update(self, control = dict()):
         """
         Update parameters
+        control: a dictionary of keyword arguments of como.logistic_ser.iter_ser
+        including: update_b, update_delta, update_xi, update_hypers
         """
         if not self.frozen:
             self.params, self.hypers = iter_ser(
-                self.data, self.params, self.hypers, 0.)
+                self.data, self.params, self.hypers, 0., **control)
 
     def evidence(self):
         """
@@ -169,7 +171,8 @@ class LogisticSusie(LogisticRegression):
     def divergence(self):
         """
         """
-        kl = susie_kl(self.params, self.hypers) + pg_kl(self.data, self.params, self.hypers)
+        kl = susie_kl(self.params, self.hypers) + \
+            pg_kl(self.data, self.params, self.hypers)
         return kl
 
     def report_credible_sets(self, coverage=0.95):
