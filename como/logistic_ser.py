@@ -26,12 +26,21 @@ def ser_kl(params, hypers):
             + jnp.sum(params['alpha'] * normal_kl(
                 params['mu'], params['var'], 0, hypers['sigma0']**2))
 
+
 def pg_kl(data, params, hypers):
     """
     KL(PG(N, xi) || PG(N, 0))
     summed across observations
     """
     return jnp.sum(polya_gamma_kl(_get_N(data, hypers), params['xi']))
+
+
+def E_omega(data, params, hypers):
+    """
+    Compute E[\omega] where \omega ~ PG(N, xi)
+    """
+    return polya_gamma_mean(_get_N(data, hypers), params['xi'])
+
 
 def Xb_ser(data, params, offset=0):
     '''Computes E[X \beta + Z \delta + offset]'''
@@ -51,7 +60,7 @@ def Xb2_ser(data, params, offset):
     return Q
 
 
-def jj_ser(data, params, offset = 0.):
+def jj_ser(data, params, hypers, offset = 0.):
     """
     Jaakola jordan bound
     equivalent (up to a constant?) to E[p(y | b, w) - q(w)]
@@ -60,7 +69,8 @@ def jj_ser(data, params, offset = 0.):
     Xb = Xb_ser(data, params, offset)
     Xb2 = Xb2_ser(data, params, offset) 
     kappa = _compute_kappa(data)
-    omega = polya_gamma_mean(data.get('N', 1.), params['xi'])
+    n = _get_N(data, hypers)
+    omega = polya_gamma_mean(n, params['xi'])
 
     return jnp.log(jax.nn.sigmoid(xi)) \
         + kappa * Xb \
@@ -68,7 +78,7 @@ def jj_ser(data, params, offset = 0.):
         + 0.5 * omega * (Xb2 - xi**2)
 
 
-def loglik_ser(data, params, offset=0):
+def loglik_ser(data, params, hypers, offset=0):
     """
     Compute the expected conditional data likelihood E[p(y | beta, omega)]
     y are the observed counts
@@ -77,18 +87,21 @@ def loglik_ser(data, params, offset=0):
     """
     Xb = Xb_ser(data, params, offset)
     Xb2 = Xb2_ser(data, params, offset)
-    omega = polya_gamma_mean(data.get('N', 1.), params['xi'])
+    n = _get_N(data, hypers)
+    omega = polya_gamma_mean(n, params['xi'])
     
     # TODO: figure out how to index alpha, for when we use it in mococomo
-    kappa = _compute_kappa(data)
-    loglik =  kappa * Xb - 0.5 * omega * Xb2
+    kappa = _compute_kappa(data, hypers)
+    loglik =  kappa * Xb - 0.5 * omega * Xb2 - n * jnp.log(2)
     return loglik
+
 
 def elbo_ser(data, params, hypers, offset):
     '''Compute ELBO for logistic SER'''
-    loglik = jnp.sum(loglik_ser(data, params, offset))
+    loglik = jnp.sum(loglik_ser(data, params, hypers, offset))
     kl = ser_kl(params, hypers) + pg_kl(data, params, hypers)
     return loglik - kl
+
 
 def _get_y(data, hypers):
     idx = hypers.get('idx', None)
@@ -98,6 +111,7 @@ def _get_y(data, hypers):
         y = data['Y'][:, idx]
     return y
 
+
 def _get_N(data, hypers):
     idx = hypers.get('idx', None)
     if idx is None:
@@ -106,8 +120,10 @@ def _get_N(data, hypers):
         N = data['N'][:, idx]
     return N
 
+
 def _compute_kappa(data, hypers):
     return _get_y(data, hypers) - 0.5 * _get_N(data, hypers)
+
 
 def _compute_nu(data, params, hypers, offset):
     """
@@ -172,6 +188,7 @@ def update_b_ser(data, params, hypers, offset):
     }
     return post
 
+
 def update_sigma0(data, params, hypers, offset):
     """
     Variational M-step for sigma0
@@ -180,6 +197,7 @@ def update_sigma0(data, params, hypers, offset):
     b2 = params['alpha'] * (params['mu']**2 + params['var'])
     sigma0 = jnp.sqrt(jnp.sum(b2))
     return sigma0
+
 
 def init_ser(data):
     '''Initialize variational approximation for SER'''
@@ -213,7 +231,8 @@ def iter_ser(data, params, hypers, offset, update_b=True, update_delta=True, upd
     if update_xi:
         params.update(update_xi_ser(data, params, hypers, offset))
     return params, hypers
- 
+
+
 def fit_ser(data, offset=0, control={}, niter=100, tol=1e-3):
     """
     Fit SER
