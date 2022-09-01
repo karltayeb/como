@@ -13,6 +13,7 @@ v_ser_kl = jax.vmap(ser_kl, (
     {'alpha': 0, 'delta': 0, 'mu': 0, 'var': 0, 'tau': None, 'xi': None},
     {'pi': 0, 'sigma0': 0, 'idx': None}))
 
+
 def susie_kl(params, hypers):
     """
     KL divergence from the current variational approximation to the prior
@@ -20,14 +21,17 @@ def susie_kl(params, hypers):
     """
     return jnp.sum(v_ser_kl(params, hypers))
 
+
 def Ew_susie(params):
     b = (params['alpha'] * params['mu']).sum(1)
     return b
+
 
 def Eb_susie(params):
     b = (params['alpha'] * params['mu']).sum(0)
     return b
     
+
 def Xb_susie(data, params):
     '''Computes E[X \beta + Z \delta + offset]'''
     b = jnp.sum(params['alpha'] * params['mu'], 0)
@@ -36,6 +40,7 @@ def Xb_susie(data, params):
     Zd = data['Z'] @ delta
     pred = Xb + Zd 
     return(pred)
+
 
 def Xb2_susie(data, params):
     B = params['mu'] * params['alpha']
@@ -46,6 +51,7 @@ def Xb2_susie(data, params):
     Xb2= data['X']**2 @ B2.sum(0) + Xb**2 - (XB**2).sum(1)
     Xb2 = Xb2 + 2*Xb*Zd + Zd**2
     return Xb2 
+
 
 def loglik_susie(data, params, hypers):
     '''
@@ -66,12 +72,14 @@ def elbo_susie(data, params, hypers):
     kl = susie_kl(params, hypers) + pg_kl(data, params, hypers)
     return loglik - kl
 
+
 def update_xi_susie(data, params, hypers):
     Xb2 = Xb2_susie(data, params)
     xi = jnp.sqrt(jnp.abs(Xb2))
     tau = _compute_tau(data, hypers, xi)
     return dict(xi=xi, tau=tau)
   
+
 def init_susie(data, L=10, idx=None):
     n, p = data['X'].shape
     params = {
@@ -88,6 +96,7 @@ def init_susie(data, L=10, idx=None):
         'idx': idx 
     }
     return params, hypers
+
 
 def susie_update_ser(carry, val):
     """
@@ -124,6 +133,7 @@ def susie_update_ser(carry, val):
     offset = offset + Xb_ser(data, params, jnp.zeros_like(offset))
     return (data, offset, xi, tau, idx), (params, hypers)
 
+
 @jit
 def susie_iter(data, params, hypers):
     """
@@ -153,6 +163,7 @@ def susie_iter(data, params, hypers):
     hypers['idx'] = idx
     return params, hypers
 
+
 def f_iter(val):
     """
     A single iteration of CAVI for SuSiE
@@ -173,6 +184,7 @@ def f_iter(val):
         elbo[:-1]
     ])
     return data, params, hypers, elbo, diff, iter+1 
+
 
 def fit_susie(data, L, niter=10, tol=1e-3):
     """
