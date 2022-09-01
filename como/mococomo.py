@@ -2,13 +2,14 @@ from operator import length_hint
 from tkinter import W
 from typing import List
 
-from .component_distributions import ComponentDistribution
+from .component_distributions import ComponentDistribution, eta2pi
 from .logistic_regression import LogisticRegression
-from .utils import categorical_entropy_vec
+from .utils import categorical_entropy_vec, polya_gamma_kl
 
 import jax.numpy as jnp
 import jax
 import numpy as np
+from jax import jit
 
 class MoreComponentCoMo:
     def __init__(self, data, f_list: List[ComponentDistribution], logreg_list: List[LogisticRegression]):
@@ -183,6 +184,29 @@ def mococomo_prior_mixture_weights(logreg_list: List[LogisticRegression]):
     return pi
 
 
+_eta2pi_vec = jax.vmap(eta2pi, 0, 0)
+
+from .logistic_susie import Xb2_susie
+from .logistic_ser import E_omega
+
+def mococomo_logpi(logreg_list: List[LogisticRegression]):
+    """
+    compute log(pi(x)) up to a constant
+    Xb_k - 0.5 \sum_{j < k} Xb_j - kln2 + c
+    adjusted so that logpi_K = 0
+    """
+    K = len(logreg_list) + 1
+    Xb = jnp.array([f.predict() for f in logreg_list]).T  # K-1
+    kln2 = (jnp.arange(K - 1) + 1) * jnp.log(2)[None]
+
+    Xb2 = jnp.array([Xb2_susie(f.data, f.params) for f in logreg_list]).T
+    omega = jnp.array([E_omega(f.data, f.params, f.hypers) for f in logreg_list]).T
+    D = jnp.cumsum(Xb2 * omega, axis=1)
+
+    C = jnp.log(2) * (K-1) + 0.5 * jnp.sum(Xb, axis=1)[:, None] + 0.5 * D
+    logpi = Xb - 0.5 * jnp.cumsum(Xb, axis=1) - 0.5 * D - kln2 + C
+    return jnp.log(_eta2pi_vec(logpi))
+
 ###
 # Compute posterior assignment probabilities
 ###
@@ -194,23 +218,24 @@ def mococomo_compute_responsibilities(data: dict, f_list: List[ComponentDistribu
     # N x K log likelihood of data under each component distribution
     loglik = jnp.array([
         f.convolved_logpdf(data['beta'], data['se']) for f in f_list]).T
-    logpi = jnp.log(mococomo_prior_mixture_weights(logreg_list))
+    #logpi = jnp.log(mococomo_prior_mixture_weights(logreg_list))
+    logpi = mococomo_logpi(logreg_list)
     post_pi = jax.nn.softmax(loglik + logpi, axis=1)
     return post_pi
 
 
-def mococomo_loglik(data: dict, f_list: List[ComponentDistribution], pi: jnp.ndarray, sum: bool=True):
+def mococomo_loglik(data: dict, f_list: List[ComponentDistribution], sum: bool=True):
     """
-    Compute the data log likelihood under mococomo model
+    Compute the expected data log likelihood under mococomo model E_q(z)[logp(y | z)]
     Parameters:
         data: a dictionary of data
         f_list: a list of Component distribution objects K
-        pi: a N x K matrix of assignment probabilities
         sum: Boolean, if True sum loglik across observations, 
             if False return loglikelihood for each observations
     """
     loglik = jnp.array([
         f.convolved_logpdf(data['beta'], data['se']) for f in f_list]).T
+    pi = data['Y']  # posterior assignment probabilities
 
     if sum:  # one number, data log likelihood
         loglik = jnp.sum(loglik + pi)
@@ -218,21 +243,54 @@ def mococomo_loglik(data: dict, f_list: List[ComponentDistribution], pi: jnp.nda
         loglik = jnp.sum(loglik + pi, 1)
     return loglik
 
-
-def mococomo_elbo(data, f_list, logreg_list, responsibilities):
-    data_loglik = jnp.sum(mococomo_loglik(data, f_list, responsibilities, sum = False))
-    assignment_loglik = 0
-    assignment_entropy = jnp.sum(categorical_entropy_vec(responsibilities))
-    kl = 0
-    # logreg_elbo = sum([ll.evidence() for ll in logreg_list])
-    total_elbo = data_loglik + assignment_loglik + assignment_entropy - kl
+def mococomo_elbo(data, f_list, logreg_list):
+    pi = data['Y']
+    data_loglik = jnp.sum(mococomo_loglik(data, f_list, sum = False))
+    assignment_entropy = jnp.sum(categorical_entropy_vec(pi))
+    logreg_elbo = sum([ll.evidence() for ll in logreg_list])
+    total_elbo = data_loglik + assignment_entropy + logreg_elbo
     
     return dict(
         data_loglik=data_loglik,
-        assignment_loglik=assignment_loglik,
         assignment_entropy=assignment_entropy,
-        kl=kl,
+        logreg_elbo = logreg_elbo,
         total_elbo=total_elbo)
+
+from .logistic_susie import Xb_susie, Xb2_susie
+def mococomo_assignment_loglik(logreg_list, responsibilities):
+    """
+    compute E_q(beta, omega)[p(z | beta, omega)]
+    """
+    Xb = jnp.array([Xb_susie(f.data, f.params) for f in logreg_list]).T
+    Xb2 = jnp.array([Xb2_susie(f.data, f.params) for f in logreg_list]).T 
+    omega = jnp.array([E_omega(f.data, f.params, f.hypers) for f in logreg_list]).T
+
+    A = jnp.cumsum(Xb, axis=1)
+    B = - 0.5 * jnp.sum(Xb2 * omega, axis=1)
+
+    K = len(logreg_list) + 1
+    kln2 = (jnp.arange(K-1) * jnp.log(2))[None]
+
+    loglik = jnp.sum((-kln2 + Xb - 0.5 * A) * responsibilities[:, :-1], axis=1)
+    loglik_K = -(K-1) * jnp.log(2) - 0.5 * A[:, -1] * responsibilities[:, -1]
+    loglik = loglik + loglik_K + B
+    return loglik
+    
+def mococomo_elbo2(data, f_list, logreg_list, responsibilities):
+    data_loglik = jnp.sum(mococomo_loglik(data, f_list, responsibilities, sum = False))
+    assignment_entropy = jnp.sum(categorical_entropy_vec(responsibilities))
+    assignment_likelihood = jnp.sum(mococomo_assignment_loglik(logreg_list, responsibilities))
+
+    susie_kl = sum([ll.divergence() for ll in logreg_list])
+    
+    total_elbo = data_loglik + assignment_likelihood + assignment_entropy - susie_kl
+    return dict(
+        data_loglik = data_loglik,
+        assignment_entropy = assignment_entropy,
+        assignment_likelihood = assignment_likelihood,
+        susie_kl = susie_kl,
+        total_elbo = total_elbo
+    )
 
 
 def comp_Nk(responsiblities):
